@@ -105,6 +105,39 @@ async function isAdminOrCreator(ctx: Context): Promise<boolean> {
   }
 }
 
+// ───────────────────────────────────────────
+// Bot must be admin in group
+// ───────────────────────────────────────────
+async function requireBotAdmin(ctx: Context): Promise<boolean> {
+  if (!ctx.chat || (ctx.chat.type !== "group" && ctx.chat.type !== "supergroup")) {
+    return true; // DM / অন্য chat এ দরকার নেই
+  }
+
+  try {
+    const botId = (ctx as any).botInfo?.id;
+    if (!botId) throw new Error("botInfo not available");
+
+    const me = await ctx.telegram.getChatMember(ctx.chat.id, botId);
+
+    if (me.status === "administrator" || me.status === "creator") {
+      return true;
+    }
+  } catch (e) {
+    // ignore, নিচে generic message
+  }
+
+  await ctx.reply(
+    "🚫 I need to be a <b>Group Admin</b> to work properly.\n\n" +
+      "Please:\n" +
+      "1️⃣ Open group → Members → Promote this bot as Admin\n" +
+      "2️⃣ Give permission to <b>send messages</b> (and pin if you want auto-pin)\n" +
+      "3️⃣ Then run /add again ✅",
+    { parse_mode: "HTML" }
+  );
+
+  return false;
+}
+
 export function registerBuyBotFeature(bot: Telegraf<BotCtx>) {
   // /start – DM + group UX
   bot.start(async (ctx) => {
@@ -169,20 +202,30 @@ export function registerBuyBotFeature(bot: Telegraf<BotCtx>) {
       return;
     }
 
-    // DM normal /start – welcome + Add to group button
+    // DM normal /start – premium welcome + Add to group button
     if (chat.type === "private") {
       const addToGroupUrl = `https://t.me/${appConfig.botUsername}?startgroup=true`;
 
       await ctx.reply(
-        "🕵️ <b>Premium Buy Bot</b>\n\n" +
-          "🔥 Live buy alerts for your token.\n\n" +
-          "• Multi-chain (ETH / BSC / BASE / MONAD)\n" +
-          "• All Pools auto-detect\n" +
-          "• Min / Max buy filter\n" +
-          "• Custom emoji + GIF / image\n\n" +
-          "🚀 To get started:\n" +
+        "💜 <b>Premium Buy Bot</b>\n" +
+          "Smart buy alerts & clean analytics for your token communities.\n\n" +
+          "✨ <b>What I do</b>\n" +
+          "• Track every buy in real time on your main pools\n" +
+          "• Work across ETH · BSC · BASE · MONAD\n" +
+          "• Auto-detect all pools for your token (main + side pools)\n" +
+          "• Show USD value, market cap, volume & liquidity in each alert\n" +
+          "• Let you style alerts with custom emoji, image or GIF\n" +
+          "• Filter by minimum / maximum USD & use cooldown to stop spam\n\n" +
+          "🛠 <b>Key commands</b>\n" +
+          "/add – Connect or update the token for a group\n" +
+          "/stop – Turn off alerts in a group\n" +
+          "/help – Show the full group control panel (DM overview)\n" +
+          "/clearcache – (Bot admin) Reset listeners & cache\n\n" +
+          "🚀 <b>Getting started</b>\n" +
           "1️⃣ Add this bot to your token group\n" +
-          "2️⃣ In the group, send <code>/add</code>\n",
+          "2️⃣ In the group, send <code>/add</code>\n" +
+          "3️⃣ Follow the wizard (token → pools → emoji → media → filters)\n\n" +
+          "Add me now and let your holders see every buy in a clean, pro format 👇",
         {
           parse_mode: "HTML",
           ...Markup.inlineKeyboard([
@@ -193,8 +236,9 @@ export function registerBuyBotFeature(bot: Telegraf<BotCtx>) {
       return;
     }
 
-    // Group /start – show control panel
+    // Group /start – show control panel (bot must be admin)
     if (chat.type === "group" || chat.type === "supergroup") {
+      if (!(await requireBotAdmin(ctx))) return;
       await sendGroupHelp(ctx);
       return;
     }
@@ -223,6 +267,14 @@ export function registerBuyBotFeature(bot: Telegraf<BotCtx>) {
     const chat = ctx.chat;
     if (!chat || (chat.type !== "group" && chat.type !== "supergroup")) {
       await ctx.answerCbQuery("Use this button inside your token group.");
+      return;
+    }
+
+    // Bot must be admin
+    if (!(await requireBotAdmin(ctx))) {
+      await ctx.answerCbQuery("Bot must be admin in this group.", {
+        show_alert: true
+      });
       return;
     }
 
@@ -259,7 +311,7 @@ export function registerBuyBotFeature(bot: Telegraf<BotCtx>) {
 
     const text = ctx.message!.text.trim();
 
-    // DM wizard
+    // DM wizard (only whoever got deep-link)
     if (chat.type === "private") {
       const userId = ctx.from!.id;
       const state = dmSetupStates.get(userId);
@@ -269,8 +321,11 @@ export function registerBuyBotFeature(bot: Telegraf<BotCtx>) {
       return;
     }
 
-    // Group wizard
+    // Group wizard – only group admins, bot must be admin
     if (chat.type === "group" || chat.type === "supergroup") {
+      if (!(await requireBotAdmin(ctx))) return;
+      if (!(await isAdminOrCreator(ctx))) return; // non-admin text ignore
+
       const chatId = chat.id;
       const state = groupSetupStates.get(chatId);
       if (!state) return next(); // no active wizard
@@ -294,6 +349,10 @@ export function registerBuyBotFeature(bot: Telegraf<BotCtx>) {
       const userId = ctx.from!.id;
       state = dmSetupStates.get(userId);
     } else if (chat.type === "group" || chat.type === "supergroup") {
+      // group: bot admin + only group admins can send media for wizard
+      if (!(await requireBotAdmin(ctx))) return;
+      if (!(await isAdminOrCreator(ctx))) return;
+
       state = groupSetupStates.get(chat.id);
     }
 
@@ -338,6 +397,13 @@ export function registerBuyBotFeature(bot: Telegraf<BotCtx>) {
     const chat = ctx.chat;
 
     if (chat && (chat.type === "group" || chat.type === "supergroup")) {
+      if (!(await requireBotAdmin(ctx))) {
+        await ctx.answerCbQuery("Bot must be admin in this group.", {
+          show_alert: true
+        });
+        return;
+      }
+
       if (!(await isAdminOrCreator(ctx))) {
         await ctx.answerCbQuery("Only group admins can use this.", {
           show_alert: true
@@ -354,6 +420,13 @@ export function registerBuyBotFeature(bot: Telegraf<BotCtx>) {
     const chat = ctx.chat;
 
     if (chat && (chat.type === "group" || chat.type === "supergroup")) {
+      if (!(await requireBotAdmin(ctx))) {
+        await ctx.answerCbQuery("Bot must be admin in this group.", {
+          show_alert: true
+        });
+        return;
+      }
+
       if (!(await isAdminOrCreator(ctx))) {
         await ctx.answerCbQuery("Only group admins can stop alerts.", {
           show_alert: true
@@ -395,6 +468,43 @@ export function registerBuyBotFeature(bot: Telegraf<BotCtx>) {
       });
     }
   });
+
+  // /help – DM help only, group এ ছোট info
+  bot.command("help", async (ctx) => {
+    const chat = ctx.chat;
+    if (!chat) return;
+
+    if (chat.type === "private") {
+      await ctx.reply(
+        "💡 <b>Help · Premium Buy Bot</b>\n\n" +
+          "🛠 <b>Main commands</b>\n" +
+          "/add – Run inside your token group to connect / update a token\n" +
+          "/stop – Run inside the group to turn alerts off (admins only)\n" +
+          "/start – In a group, opens the full control panel\n" +
+          "/clearcache – (Bot admin) Reset listeners & cache\n\n" +
+          "🚀 <b>How to use</b>\n" +
+          "1️⃣ Add this bot to your token group\n" +
+          "2️⃣ In the group, send /add\n" +
+          "3️⃣ Follow the wizard (token → pools → emoji → media → filters)\n\n" +
+          "For a live overview of the group status, just use /start inside your token group.",
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
+    if (chat.type === "group" || chat.type === "supergroup") {
+      // only admins, ছোট msg (no spam panel)
+      if (!(await isAdminOrCreator(ctx))) return;
+      if (!(await requireBotAdmin(ctx))) return;
+
+      await ctx.reply(
+        "ℹ️ Use /start in this group to open the full panel.\n" +
+          "For detailed docs, open a DM with me and send /help.",
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+  });
 }
 
 /* ======================
@@ -406,6 +516,8 @@ async function handleStopCommand(ctx: Context) {
     await ctx.reply("Use /stop inside your token group.");
     return;
   }
+
+  if (!(await requireBotAdmin(ctx))) return;
 
   const groupId = ctx.chat.id;
   if (groupSettings.has(groupId)) {
@@ -447,6 +559,8 @@ async function handleAddCommand(ctx: Context) {
 
   // Group: offer DM setup + in-group setup
   if (chat.type === "group" || chat.type === "supergroup") {
+    if (!(await requireBotAdmin(ctx))) return;
+
     const groupId = chat.id;
     const setupDmUrl = `https://t.me/${appConfig.botUsername}?start=setup_${groupId}`;
 
@@ -796,12 +910,23 @@ function shorten(addr: string, len = 6): string {
 }
 
 async function sendGroupHelp(ctx: Context) {
-  const active = groupSettings.has(ctx.chat!.id) ? "Active 🟢" : "Inactive 🔴";
+  const isActive = groupSettings.has(ctx.chat!.id);
+  const statusLine = isActive
+    ? "🟢 <b>Status:</b> Active – buy alerts are running."
+    : "🔴 <b>Status:</b> Inactive – no token is being tracked yet.";
 
   await ctx.reply(
-    `<b>Premium Buy Bot</b>\n\n` +
-      `Status: ${active}\n\n` +
-      "Manage everything using the panel below 👇",
+    "<b>Premium Buy Bot · Group Panel</b>\n\n" +
+      statusLine + "\n\n" +
+      "✨ <b>What this bot does</b>\n" +
+      "• Tracks every buy on your main pools in real time\n" +
+      "• Shows USD value, MC, volume & liquidity in each alert\n" +
+      "• Lets you use custom emoji + image / GIF per token\n" +
+      "• Min / Max USD filters and cooldown to avoid spam\n\n" +
+      "🛠 <b>Key commands</b>\n" +
+      "/add – Connect or update the token for this group\n" +
+      "/stop – Turn off alerts in this group\n" +
+      "\nUse the buttons below to quickly manage the token for this group 👇",
     {
       parse_mode: "HTML",
       reply_markup: {

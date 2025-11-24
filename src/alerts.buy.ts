@@ -18,7 +18,9 @@ export interface PremiumAlertData {
   priceUsd: number;
   pairAddress: string;
   pairLiquidityUsd: number;
+  baseSymbol: string; // ⭐ নতুন: যেই token দিয়ে buy হয়েছে (USDC / MONAD / WETH ...)
 }
+
 
 // cooldown per group+pair (moved here)
 const lastAlertAt = new Map<string, number>();
@@ -72,7 +74,7 @@ export async function sendPremiumBuyAlert(
   settings: BuyBotSettings,
   data: PremiumAlertData
 ) {
-  const {
+    const {
     usdValue,
     baseAmount,
     tokenAmount,
@@ -86,8 +88,10 @@ export async function sendPremiumBuyAlert(
     volume24h,
     priceUsd, // eslint-disable-line @typescript-eslint/no-unused-vars
     pairAddress,
-    pairLiquidityUsd
+    pairLiquidityUsd,
+    baseSymbol
   } = data;
+
 
   const buyUsd = Math.round(usdValue);
   if (buyUsd < settings.minBuyUsd) return;
@@ -102,7 +106,7 @@ export async function sendPremiumBuyAlert(
 
   const chainStr = String(chain).toLowerCase();
 
-  let baseEmoji = "";
+    let baseEmoji = "";
   let baseSymbolText = "";
   if (chainStr === "bsc") {
     baseEmoji = "🟡";
@@ -130,6 +134,10 @@ export async function sendPremiumBuyAlert(
     baseEmoji = "💠";
     baseSymbolText = "NATIVE";
   }
+
+  // ⭐ DexScreener theke paoa baseSymbol > chain-native fallback
+  const baseDisplaySymbol = baseSymbol || baseSymbolText || "NATIVE";
+  const safeBaseSymbol = escapeHtml(baseDisplaySymbol);
 
   const explorerBase =
     appConfig.chains[chain]?.explorer ||
@@ -198,11 +206,13 @@ export async function sendPremiumBuyAlert(
 ${headerLine}
 ${whaleLoadLine}
 💰 <b>$${buyUsd.toLocaleString()}</b> ${safeTokenSymbol} BUY
+
 ${emojiBar}
 
-${baseEmoji} <b>${baseSymbolText}:</b> ${baseAmount.toFixed(
-    4
-  )} ($${buyUsd.toLocaleString()})
+${baseEmoji} <b>${safeBaseSymbol}:</b> ${baseAmount.toLocaleString("en-US", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+})} ($${buyUsd.toLocaleString()})
 💳 ${safeTokenSymbol}: ${tokenAmountDisplay}
 
 🔗 <a href="${pairLink}">View Pair</a> → $${lpText} LP
