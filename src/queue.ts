@@ -75,6 +75,6 @@ export class AlertQueue {
 }
 
 export const globalAlertQueue = new AlertQueue({
-  maxPerSecond: 20, // Telegram global ~30/sec, safe side
-  maxInFlight: 3
+  maxPerSecond: 25, // Telegram global ~30/sec, safe side
+  maxInFlight: 4
 });
