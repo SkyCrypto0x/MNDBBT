@@ -50,7 +50,9 @@ interface DmSetupState extends BaseSetupState {
 }
 
 // Group flow: per-group state
-interface GroupSetupState extends BaseSetupState {}
+interface GroupSetupState extends BaseSetupState {
+  initiatorId: number; // যে admin setup শুরু করেছে
+}
 
 const dmSetupStates = new Map<number, DmSetupState>(); // userId -> state
 const groupSetupStates = new Map<number, GroupSetupState>(); // chatId -> state
@@ -290,7 +292,8 @@ export function registerBuyBotFeature(bot: Telegraf<BotCtx>) {
     groupSetupStates.set(chatId, {
       step: "token",
       settings: { chain: appConfig.defaultChain },
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      initiatorId: ctx.from!.id // এই admin-ই পরে reply করতে পারবে
     });
 
     await ctx.editMessageReplyMarkup(undefined).catch(() => {});
@@ -330,6 +333,11 @@ export function registerBuyBotFeature(bot: Telegraf<BotCtx>) {
       const state = groupSetupStates.get(chatId);
       if (!state) return next(); // no active wizard
 
+      // 🔒 শুধুমাত্র সেই admin-এর reply নেবে, যে setup শুরু করেছে
+      if (ctx.from && ctx.from.id !== state.initiatorId) {
+        return next();
+      }
+
       await runSetupStep(ctx, state, text);
       return;
     }
@@ -346,6 +354,7 @@ export function registerBuyBotFeature(bot: Telegraf<BotCtx>) {
     let state: BaseSetupState | undefined;
 
     if (chat.type === "private") {
+      // DM setup: userId → dmSetupStates
       const userId = ctx.from!.id;
       state = dmSetupStates.get(userId);
     } else if (chat.type === "group" || chat.type === "supergroup") {
@@ -353,9 +362,18 @@ export function registerBuyBotFeature(bot: Telegraf<BotCtx>) {
       if (!(await requireBotAdmin(ctx))) return;
       if (!(await isAdminOrCreator(ctx))) return;
 
-      state = groupSetupStates.get(chat.id);
+      const groupState = groupSetupStates.get(chat.id);
+      if (!groupState) return next(); // কোনো active wizard নেই
+
+      // 🔒 শুধু যে admin setup শুরু করেছে (initiatorId), তার media নেওয়া যাবে
+      if (ctx.from && ctx.from.id !== groupState.initiatorId) {
+        return next();
+      }
+
+      state = groupState;
     }
 
+    // যদি কোনো active setup না থাকে / image step না হয়, ignore
     if (!state || state.step !== "image") {
       return next();
     }
@@ -520,16 +538,43 @@ async function handleStopCommand(ctx: Context) {
   if (!(await requireBotAdmin(ctx))) return;
 
   const groupId = ctx.chat.id;
+
+  let hadSettings = false;
+  let hadSetup = false;
+
+  // 1) Active group wizard থাকলে cancel করো
+  if (groupSetupStates.has(groupId)) {
+    groupSetupStates.delete(groupId);
+    hadSetup = true;
+  }
+
+  // 2) DM থেকে কেউ যদি এই group-এর setup করছিল, সেটাও cancel
+  for (const [userId, st] of dmSetupStates.entries()) {
+    if (st.targetChatId === groupId) {
+      dmSetupStates.delete(userId);
+      hadSetup = true;
+    }
+  }
+
+  // 3) Buy alerts বন্ধ
   if (groupSettings.has(groupId)) {
     groupSettings.delete(groupId);
     markGroupSettingsDirty(); // persist change
+    hadSettings = true;
+  }
+
+  // 4) এখন proper message
+  if (hadSettings || hadSetup) {
     await ctx.reply(
-      "🛑 <b>Buy alerts stopped for this group.</b>\n\n" +
+      "🛑 <b>Buy alerts and setup stopped for this group.</b>\n\n" +
         "To enable again, send <code>/add</code>.",
       { parse_mode: "HTML" }
     );
   } else {
-    await ctx.reply("ℹ️ There is no active tracking in this group.");
+    await ctx.reply(
+      "ℹ️ There is no active tracking or setup in this group.",
+      { parse_mode: "HTML" }
+    );
   }
 
   await sendGroupHelp(ctx);
