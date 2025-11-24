@@ -21,16 +21,19 @@ export interface HybridPair {
  */
 export type SimplePairInfo = HybridPair;
 
-const GECKO_MAP: Record<string, string> = {
+export const GECKO_MAP: Record<string, string> = {
   bsc: "bsc",
   ethereum: "eth",
   base: "base",
-  arbitrum: "arb",
-  polygon: "matic",
-  solana: "sol",
-  avalanche: "avalanche",
-  fantom: "fantom"
+  monad: "monad",
+  arbitrum: "arbitrum",
+  polygon: "polygon_pos",
+  solana: "solana",
+  avalanche: "avax",
+  sonic: "sonic-svm"
 };
+
+
 
 // ---------------- DexScreener — PRIMARY ----------------
 

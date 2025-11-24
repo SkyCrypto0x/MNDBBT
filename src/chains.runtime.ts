@@ -5,7 +5,7 @@ import { appConfig, ChainId } from "./config";
 import { groupSettings, markGroupSettingsDirty } from "./storage";
 import { BuyBotSettings } from "./feature.buyBot";
 import { globalAlertQueue } from "./queue";
-import { getNewPairsHybrid, type SimplePairInfo } from "./utils/hybridApi";
+import { getNewPairsHybrid, type SimplePairInfo, GECKO_MAP } from "./utils/hybridApi";
 import { sendPremiumBuyAlert, PremiumAlertData } from "./alerts.buy";
 
 // ────────────────── V2 / V3 / V4 Swap ABIs ──────────────────
